@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Noto Sans KR", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: #f4f4f5;
+    color: #111111;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  h1,
+  h2,
+  h3,
+  p,
+  button,
+  input,
+  textarea,
+  label {
+    overflow-wrap: break-word;
+    word-break: keep-all;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 999px;
+}
+
+.chat-grid {
+  grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.45fr) minmax(20rem, 0.95fr);
+}
+
+.chat-grid > * {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .chat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.emomon-panel-shadow {
+  box-shadow: 0 24px 70px rgba(17, 24, 39, 0.18);
+}

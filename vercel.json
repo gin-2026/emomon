@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    {
+      "source": "/((?!emomon-embed.js|assets/.*|favicon.ico).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+

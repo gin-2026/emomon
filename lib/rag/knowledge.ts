@@ -12,7 +12,7 @@ export type KnowledgeDoc = {
   title: string;
   category: KnowledgeCategory;
   module: string;
-  sourceType: 'product' | 'market-asset' | 'workflow' | 'policy' | 'implementation';
+  sourceType: 'product' | 'market-asset' | 'workflow' | 'policy' | 'implementation' | 'manual';
   updatedAt: string;
   confidence: 'high' | 'medium' | 'draft';
   tags: string[];
@@ -165,7 +165,7 @@ export const knowledgeDocs: KnowledgeDoc[] = [
     confidence: 'medium',
     tags: ['RAG', '검색', '인덱스', '임베딩', '평가셋'],
     body:
-      'Emomon의 검색 레이어는 지식 문서, 메타데이터, 검색 결과, 응답 생성을 분리합니다. 현재는 MiniSearch 기반 로컬 검색과 규칙 기반 합성을 사용하고, 이후 벡터 DB, 워크플로우 엔진, LLM API를 같은 인터페이스 뒤에 연결할 수 있습니다.',
+      'Emomon의 검색 레이어는 지식 문서, 메타데이터, 검색 결과, 응답 생성을 분리합니다. 현재는 로컬 검색 백업과 Upstash Vector 검색을 같은 인터페이스 뒤에 두고, 환경변수가 있으면 Gemini 임베딩 기반 검색으로 전환됩니다.',
   },
   {
     id: 'pricing-upgrade',
@@ -203,4 +203,3 @@ export const moduleLabels: Record<string, string> = {
   'any-stripe': 'AniStripe',
   'ip-builder': 'IP Builder',
 };
-

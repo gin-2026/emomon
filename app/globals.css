@@ -7,8 +7,7 @@
 
 @layer base {
   html,
-  body,
-  #root {
+  body {
     min-height: 100%;
   }
 
@@ -35,7 +34,8 @@
   button,
   input,
   textarea,
-  label {
+  label,
+  a {
     overflow-wrap: break-word;
     word-break: keep-all;
   }

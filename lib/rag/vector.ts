@@ -10,6 +10,7 @@ const DEFAULT_EMBEDDING_MODEL = 'text-embedding-004';
 const VECTOR_NAMESPACE = 'emomon';
 
 type VectorMetadata = {
+  sourceId?: string;
   title: string;
   content: string;
   module: string;
@@ -36,6 +37,18 @@ export type RagRetrievalResult = {
   warning?: string;
 };
 
+export type VectorIndexInfoResult = {
+  connected: boolean;
+  namespace: string;
+  vectorCount?: number;
+  pendingVectorCount?: number;
+  indexSize?: number;
+  dimension?: number;
+  similarityFunction?: string;
+  namespaceVectorCount?: number;
+  reason?: string;
+};
+
 export function getRagConfigStatus(): RagConfigStatus {
   const googleApiKey = Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY);
   const upstashVector = Boolean(process.env.UPSTASH_VECTOR_REST_URL && process.env.UPSTASH_VECTOR_REST_TOKEN);
@@ -57,6 +70,41 @@ function getVectorIndex() {
     url: process.env.UPSTASH_VECTOR_REST_URL,
     token: process.env.UPSTASH_VECTOR_REST_TOKEN,
   });
+}
+
+export async function getVectorIndexInfo(): Promise<VectorIndexInfoResult> {
+  const status = getRagConfigStatus();
+  const index = getVectorIndex();
+
+  if (!index) {
+    return {
+      connected: false,
+      namespace: status.namespace,
+      reason: 'UPSTASH_VECTOR_REST_URL, UPSTASH_VECTOR_REST_TOKEN이 없어 벡터 인덱스 정보를 조회하지 않습니다.',
+    };
+  }
+
+  try {
+    const info = await index.info();
+    const namespaceInfo = info.namespaces?.[status.namespace];
+
+    return {
+      connected: true,
+      namespace: status.namespace,
+      vectorCount: info.vectorCount,
+      pendingVectorCount: info.pendingVectorCount,
+      indexSize: info.indexSize,
+      dimension: info.dimension,
+      similarityFunction: String(info.similarityFunction),
+      namespaceVectorCount: namespaceInfo?.vectorCount,
+    };
+  } catch (error) {
+    return {
+      connected: false,
+      namespace: status.namespace,
+      reason: error instanceof Error ? error.message : 'Upstash Vector 정보를 조회하지 못했습니다.',
+    };
+  }
 }
 
 function getEmbeddingModel() {
@@ -173,6 +221,7 @@ export async function upsertDocumentChunks(chunks: ChunkInput[]) {
       id: chunk.id,
       vector: embeddings[index],
       metadata: {
+        sourceId: chunk.sourceId,
         title: chunk.title,
         content: chunk.content,
         module: chunk.module,

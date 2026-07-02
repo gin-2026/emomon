@@ -53,6 +53,68 @@ type ConfigStatus = {
   readyForVectorRag: boolean;
 };
 
+type RagCatalogSource = {
+  sourceId: string;
+  title: string;
+  module: string;
+  category: string;
+  sourceType: string;
+  confidence: RagHit['confidence'];
+  updatedAt: string;
+  tags: string[];
+  charLength: number;
+  chunkCount: number;
+};
+
+type RagCatalogChunk = {
+  id: string;
+  sourceId?: string;
+  title: string;
+  module: string;
+  category: string;
+  sourceType: string;
+  chunkIndex: number;
+  preview: string;
+  charLength: number;
+  tokenEstimate: number;
+};
+
+type RagCatalogResponse = {
+  status: ConfigStatus;
+  vectorInfo: {
+    connected: boolean;
+    namespace: string;
+    vectorCount?: number;
+    pendingVectorCount?: number;
+    dimension?: number;
+    similarityFunction?: string;
+    namespaceVectorCount?: number;
+    reason?: string;
+  };
+  splitter: {
+    library: string;
+    strategy: string;
+    chunkSize: number;
+    chunkOverlap: number;
+  };
+  summary: {
+    sourceCount: number;
+    chunkCount: number;
+    totalChars: number;
+    totalTokenEstimate: number;
+  };
+  sources: RagCatalogSource[];
+  chunks: RagCatalogChunk[];
+};
+
+type RagSeedResult = {
+  indexed: boolean;
+  reason?: string;
+  namespace: string;
+  sourceCount: number;
+  chunkCount: number;
+};
+
 function readContextFromWindow(): AgentContext {
   if (typeof window === 'undefined') return normalizeContext(undefined);
 
@@ -244,6 +306,162 @@ function DashboardOverview({ context, status }: { context: AgentContext; status:
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+function RagIndexPanel({ context }: { context: AgentContext }) {
+  const [catalog, setCatalog] = React.useState<RagCatalogResponse | null>(null);
+  const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null);
+  const [seedResult, setSeedResult] = React.useState<RagSeedResult | null>(null);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSeeding, setIsSeeding] = React.useState(false);
+
+  const selectedSource = catalog?.sources.find((source) => source.sourceId === selectedSourceId) || catalog?.sources[0];
+  const selectedChunks = selectedSource
+    ? catalog?.chunks.filter((chunk) => chunk.sourceId === selectedSource.sourceId).slice(0, 3) || []
+    : [];
+
+  const loadCatalog = React.useCallback(async () => {
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('/api/rag/sources');
+      const payload = (await response.json()) as RagCatalogResponse;
+
+      setCatalog(payload);
+      setSelectedSourceId((current) => current || payload.sources[0]?.sourceId || null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
+
+  const seedIndex = async () => {
+    setIsSeeding(true);
+    setSeedResult(null);
+
+    try {
+      const response = await fetch('/api/rag/seed', { method: 'POST' });
+      const payload = (await response.json()) as RagSeedResult;
+
+      setSeedResult(payload);
+      await loadCatalog();
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Database size={18} className="text-cyan-700" />
+              <h3 className="text-lg font-black">RAG 인덱스</h3>
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-zinc-600">
+              참조 문서, LangChain 청크, 벡터 저장 상태를 확인합니다.
+            </p>
+          </div>
+          <Badge className={catalog?.status.readyForVectorRag ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}>
+            {catalog?.status.readyForVectorRag ? 'Vector Ready' : 'Env 대기'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading || !catalog ? (
+          <div className="border border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">인덱스 카탈로그를 불러오는 중입니다.</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                ['문서', catalog.summary.sourceCount],
+                ['청크', catalog.summary.chunkCount],
+                ['토큰 추정', catalog.summary.totalTokenEstimate],
+              ].map(([label, value]) => (
+                <div key={label as string} className="border border-zinc-200 bg-zinc-50 p-3">
+                  <p className="text-xl font-black">{value as number}</p>
+                  <p className="text-xs font-bold text-zinc-500">{label as string}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="border border-zinc-200 bg-zinc-50 p-3">
+              <div className="grid grid-cols-2 gap-3 text-xs font-bold text-zinc-600">
+                <p>
+                  Splitter <span className="block text-sm font-black text-zinc-950">{catalog.splitter.strategy}</span>
+                </p>
+                <p>
+                  Vector <span className="block text-sm font-black text-zinc-950">{catalog.vectorInfo.dimension || '미연결'}</span>
+                </p>
+                <p>
+                  Namespace <span className="block text-sm font-black text-zinc-950">{catalog.vectorInfo.namespace}</span>
+                </p>
+                <p>
+                  저장 벡터 <span className="block text-sm font-black text-zinc-950">{catalog.vectorInfo.namespaceVectorCount ?? '-'}</span>
+                </p>
+              </div>
+              {catalog.vectorInfo.reason && <p className="mt-3 text-xs font-semibold leading-5 text-amber-700">{catalog.vectorInfo.reason}</p>}
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+              <div className="max-h-64 overflow-y-auto border border-zinc-200">
+                {catalog.sources.map((source) => (
+                  <button
+                    key={source.sourceId}
+                    type="button"
+                    onClick={() => setSelectedSourceId(source.sourceId)}
+                    className={cn(
+                      'block w-full border-b border-zinc-200 bg-white p-3 text-left last:border-b-0 hover:bg-zinc-50',
+                      selectedSource?.sourceId === source.sourceId && 'bg-cyan-50',
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-black text-zinc-950">{source.title}</p>
+                      <Badge>{source.chunkCount} chunks</Badge>
+                    </div>
+                    <p className="mt-1 text-xs font-bold text-zinc-500">
+                      {moduleLabels[source.module] ?? source.module} · {categoryLabel[source.category as RagHit['category']] ?? source.category}
+                    </p>
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                {selectedChunks.map((chunk) => (
+                  <div key={chunk.id} className="border border-zinc-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-black text-cyan-700">{chunk.id}</p>
+                      <span className="text-xs font-bold text-zinc-500">{chunk.tokenEstimate} tokens</span>
+                    </div>
+                    <p className="mt-2 text-xs font-semibold leading-5 text-zinc-600">{chunk.preview}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {seedResult && (
+              <div className="border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-sm font-black">{seedResult.indexed ? 'Seed 인덱싱 완료' : 'Seed 청킹 완료'}</p>
+                <p className="mt-1 text-xs font-semibold leading-5 text-zinc-600">
+                  문서 {seedResult.sourceCount}개 · 청크 {seedResult.chunkCount}개 · {seedResult.namespace}
+                </p>
+                {seedResult.reason && <p className="mt-2 text-xs font-semibold leading-5 text-amber-700">{seedResult.reason}</p>}
+              </div>
+            )}
+
+            <Button type="button" onClick={seedIndex} disabled={isSeeding} className="w-full">
+              {isSeeding ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
+              기본 참조 문서 seed 인덱싱
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -560,6 +778,7 @@ function AssetPanel({ context, status }: { context: AgentContext; status: Config
 
   return (
     <aside className="space-y-4">
+      <RagIndexPanel context={context} />
       <DocumentPanel context={context} status={status} />
 
       <Card>

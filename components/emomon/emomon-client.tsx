@@ -43,6 +43,7 @@ import {
 import { moduleLabels } from '@/lib/rag/knowledge';
 
 type EmomonMode = 'standalone' | 'widget';
+type StandaloneSection = 'widget' | 'streaming' | 'assets' | 'documents';
 
 type ConfigStatus = {
   googleApiKey: boolean;
@@ -766,7 +767,17 @@ function DocumentPanel({ context, status }: { context: AgentContext; status: Con
   );
 }
 
-function AssetPanel({ context, status }: { context: AgentContext; status: ConfigStatus | null }) {
+function AssetPanel({
+  context,
+  status,
+  assetsRef,
+  documentsRef,
+}: {
+  context: AgentContext;
+  status: ConfigStatus | null;
+  assetsRef?: React.RefObject<HTMLDivElement | null>;
+  documentsRef?: React.RefObject<HTMLDivElement | null>;
+}) {
   const [query, setQuery] = React.useState('시장 검증 통계 RAG 임베드');
   const hits = retrieveLocal(query, context, 5);
   const snippet = `<script defer src="https://emomon.vercel.app/emomon-embed.js" data-emomon-module="${context.module}" data-emomon-plan="${context.plan}"></script>`;
@@ -778,8 +789,12 @@ function AssetPanel({ context, status }: { context: AgentContext; status: Config
 
   return (
     <aside className="space-y-4">
-      <RagIndexPanel context={context} />
-      <DocumentPanel context={context} status={status} />
+      <div ref={assetsRef} className="scroll-mt-4" data-section="assets">
+        <RagIndexPanel context={context} />
+      </div>
+      <div ref={documentsRef} className="scroll-mt-4" data-section="documents">
+        <DocumentPanel context={context} status={status} />
+      </div>
 
       <Card>
         <CardHeader>
@@ -835,6 +850,35 @@ function AssetPanel({ context, status }: { context: AgentContext; status: Config
 function StandaloneApp() {
   const [context, setContext] = React.useState<AgentContext>(() => normalizeContext(undefined));
   const [status, setStatus] = React.useState<ConfigStatus | null>(null);
+  const [activeSection, setActiveSection] = React.useState<StandaloneSection>('widget');
+  const widgetRef = React.useRef<HTMLDivElement | null>(null);
+  const streamingRef = React.useRef<HTMLDivElement | null>(null);
+  const assetsRef = React.useRef<HTMLDivElement | null>(null);
+  const documentsRef = React.useRef<HTMLDivElement | null>(null);
+  const sectionRefs: Record<StandaloneSection, React.RefObject<HTMLDivElement | null>> = {
+    widget: widgetRef,
+    streaming: streamingRef,
+    assets: assetsRef,
+    documents: documentsRef,
+  };
+  const navItems: Array<{ key: StandaloneSection; label: string; icon: typeof PlugZap }> = [
+    { key: 'widget', label: '위젯 상태', icon: PlugZap },
+    { key: 'streaming', label: '스트리밍', icon: Database },
+    { key: 'assets', label: '검증 자산', icon: BarChart3 },
+    { key: 'documents', label: '문서 컨텍스트', icon: FileSearch },
+  ];
+
+  const moveToSection = (section: StandaloneSection) => {
+    setActiveSection(section);
+    const target = sectionRefs[section].current;
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    if (section === 'streaming') {
+      window.setTimeout(() => {
+        target?.querySelector<HTMLInputElement>('input[placeholder="검증할 기획, 시장 검색, 결과물 질문을 입력하세요"]')?.focus();
+      }, 350);
+    }
+  };
 
   React.useEffect(() => {
     setContext(readContextFromWindow());
@@ -856,21 +900,25 @@ function StandaloneApp() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {[
-              ['위젯 상태', PlugZap],
-              ['스트리밍', Database],
-              ['검증 자산', BarChart3],
-              ['문서 컨텍스트', FileSearch],
-            ].map(([label, Icon]) => {
-              const TypedIcon = Icon as typeof PlugZap;
+            {navItems.map(({ key, label, icon: Icon }) => {
+              const isActive = activeSection === key;
+
               return (
-                <span
-                  key={label as string}
-                  className="inline-flex items-center gap-2 border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-black text-zinc-700"
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => moveToSection(key)}
+                  className={cn(
+                    'inline-flex items-center gap-2 border px-3 py-2 text-sm font-black transition-colors',
+                    isActive
+                      ? 'border-zinc-950 bg-zinc-950 text-white'
+                      : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-cyan-700 hover:text-cyan-700',
+                  )}
                 >
-                  <TypedIcon size={15} />
-                  {label as string}
-                </span>
+                  <Icon size={15} />
+                  {label}
+                </button>
               );
             })}
           </div>
@@ -878,12 +926,16 @@ function StandaloneApp() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-6">
-        <DashboardOverview context={context} status={status} />
+        <div ref={widgetRef} className="scroll-mt-4" data-section="widget">
+          <DashboardOverview context={context} status={status} />
+        </div>
 
         <div className="chat-grid grid gap-4">
           <ContextPanel context={context} setContext={setContext} />
-          <ChatPanel context={context} />
-          <AssetPanel context={context} status={status} />
+          <div ref={streamingRef} className="scroll-mt-4" data-section="streaming">
+            <ChatPanel context={context} />
+          </div>
+          <AssetPanel context={context} status={status} assetsRef={assetsRef} documentsRef={documentsRef} />
         </div>
       </main>
     </div>

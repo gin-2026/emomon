@@ -9,12 +9,17 @@ import {
   ClipboardCopy,
   Database,
   FileSearch,
+  FileText,
+  FolderOpen,
+  ListFilter,
   Loader2,
   LockKeyhole,
   MessageCircle,
   PlugZap,
+  RefreshCw,
   Send,
   ShieldCheck,
+  Trash2,
   UploadCloud,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -114,6 +119,47 @@ type RagSeedResult = {
   chunkCount: number;
 };
 
+type IngestResult = {
+  sourceId?: string;
+  title?: string;
+  module?: string;
+  category?: string;
+  sourceType?: string;
+  charLength?: number;
+  chunks: number;
+  indexed: boolean;
+  namespace?: string;
+  reason?: string;
+  updatedAt?: string;
+};
+
+type ManagedDocument = {
+  id: string;
+  title: string;
+  module: string;
+  category: string;
+  sourceType: string;
+  charLength: number;
+  chunks: number;
+  indexed: boolean;
+  namespace?: string;
+  reason?: string;
+  updatedAt?: string;
+  origin: 'catalog' | 'session';
+  preview: string;
+  content?: string;
+};
+
+const documentCategoryOptions = ['workflow', 'planning', 'market', 'validation', 'pricing', 'embed', 'module'];
+const sourceTypeOptions = [
+  { value: 'manual', label: '직접 입력' },
+  { value: 'workflow', label: '워크플로우' },
+  { value: 'market-asset', label: '시장 자료' },
+  { value: 'implementation', label: '구현 문서' },
+  { value: 'policy', label: '정책 문서' },
+  { value: 'product', label: '제품 문서' },
+];
+
 function readContextFromWindow(): AgentContext {
   if (typeof window === 'undefined') return normalizeContext(undefined);
 
@@ -128,6 +174,51 @@ function readContextFromWindow(): AgentContext {
     sourceUrl,
     workspaceName: params.get('workspace') || 'Demo workspace',
   });
+}
+
+function stripFileExtension(fileName: string) {
+  return fileName.replace(/\.[^/.]+$/, '');
+}
+
+function estimateChunkCount(content: string) {
+  const length = content.trim().length;
+  if (!length) return 0;
+
+  return Math.max(1, Math.ceil(length / 760));
+}
+
+function formatUpdatedAt(value?: string) {
+  if (!value) return '방금 전';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function sourceTypeLabel(value: string) {
+  return sourceTypeOptions.find((option) => option.value === value)?.label || value;
+}
+
+function catalogSourceToManagedDocument(source: RagCatalogSource): ManagedDocument {
+  return {
+    id: source.sourceId,
+    title: source.title,
+    module: source.module,
+    category: source.category,
+    sourceType: source.sourceType,
+    charLength: source.charLength,
+    chunks: source.chunkCount,
+    indexed: true,
+    updatedAt: source.updatedAt,
+    origin: 'catalog',
+    preview: source.tags.length > 0 ? source.tags.join(', ') : `${source.charLength.toLocaleString()}자`,
+  };
 }
 
 function ConfidenceBadge({ value }: { value: RagHit['confidence'] }) {
@@ -655,10 +746,68 @@ function DocumentPanel({ context, status }: { context: AgentContext; status: Con
   const [content, setContent] = React.useState(
     '사용자가 업로드한 레퍼런스 문서, 기획 메모, 시장 조사 내용을 이 영역에 붙여넣으면 Emomon이 청킹 후 벡터 인덱싱 대상으로 보냅니다.',
   );
-  const [result, setResult] = React.useState<{ chunks: number; indexed: boolean; reason?: string; namespace?: string } | null>(null);
+  const [category, setCategory] = React.useState('workflow');
+  const [sourceType, setSourceType] = React.useState('manual');
+  const [fileName, setFileName] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<IngestResult | null>(null);
+  const [documents, setDocuments] = React.useState<ManagedDocument[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = React.useState<string | null>(null);
+  const [query, setQuery] = React.useState('');
+  const [moduleFilter, setModuleFilter] = React.useState<'current' | 'all'>('current');
+  const [isCatalogLoading, setIsCatalogLoading] = React.useState(false);
   const [isUploading, setIsUploading] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const estimatedChunks = estimateChunkCount(content);
+  const canIngest = title.trim().length > 0 && content.trim().length >= 20 && !isUploading;
+  const filteredDocuments = documents.filter((document) => {
+    const matchesModule = moduleFilter === 'all' || document.module === context.module;
+    const normalizedQuery = query.trim().toLowerCase();
+    const matchesQuery =
+      !normalizedQuery ||
+      [document.title, document.preview, document.module, document.category, document.sourceType].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
+      );
+
+    return matchesModule && matchesQuery;
+  });
+  const selectedDocument = documents.find((document) => document.id === selectedDocumentId) || filteredDocuments[0] || null;
+
+  const loadCatalog = React.useCallback(async () => {
+    setIsCatalogLoading(true);
+
+    try {
+      const response = await fetch('/api/rag/sources');
+      const payload = (await response.json()) as RagCatalogResponse;
+      const catalogDocuments = payload.sources.map(catalogSourceToManagedDocument);
+
+      setDocuments((current) => {
+        const sessionDocuments = current.filter((document) => document.origin === 'session');
+        const sessionIds = new Set(sessionDocuments.map((document) => document.id));
+        return [...sessionDocuments, ...catalogDocuments.filter((document) => !sessionIds.has(document.id))];
+      });
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
+
+  const readFile = async (file?: File) => {
+    if (!file) return;
+
+    const text = await file.text();
+    setFileName(file.name);
+    setTitle((current) => (current.trim() && current !== '신규 기획 검증 메모' ? current : stripFileExtension(file.name)));
+    setContent(text);
+    setSourceType('manual');
+  };
 
   const ingest = async () => {
+    if (!canIngest) return;
+
     setIsUploading(true);
     setResult(null);
 
@@ -670,14 +819,35 @@ function DocumentPanel({ context, status }: { context: AgentContext; status: Con
           title,
           content,
           module: context.module,
-          category: 'workflow',
-          sourceType: 'manual',
+          category,
+          sourceType,
+          sourceName: fileName || undefined,
         }),
       });
-      const payload = await response.json();
+      const payload = (await response.json()) as IngestResult & { error?: string };
 
       if (!response.ok) throw new Error(payload.error || '문서 추가에 실패했습니다.');
+
+      const nextDocument: ManagedDocument = {
+        id: payload.sourceId || `session-${Date.now()}`,
+        title: payload.title || title,
+        module: payload.module || context.module,
+        category: payload.category || category,
+        sourceType: payload.sourceType || sourceType,
+        charLength: payload.charLength || content.trim().length,
+        chunks: payload.chunks,
+        indexed: payload.indexed,
+        namespace: payload.namespace,
+        reason: payload.reason,
+        updatedAt: payload.updatedAt || new Date().toISOString(),
+        origin: 'session',
+        preview: content.trim().slice(0, 220),
+        content,
+      };
+
       setResult(payload);
+      setDocuments((current) => [nextDocument, ...current.filter((document) => document.id !== nextDocument.id)]);
+      setSelectedDocumentId(nextDocument.id);
     } catch (error) {
       setResult({
         chunks: 0,
@@ -689,50 +859,265 @@ function DocumentPanel({ context, status }: { context: AgentContext; status: Con
     }
   };
 
+  const loadDocumentToForm = (document: ManagedDocument) => {
+    setTitle(document.origin === 'session' ? document.title : `${document.title} 확장 메모`);
+    setCategory(document.category);
+    setSourceType(document.sourceType);
+    setContent(
+      document.content ||
+        `참조 문서: ${document.title}\n분류: ${categoryLabel[document.category as RagHit['category']] ?? document.category}\n\n추가할 검증 메모를 입력하세요.`,
+    );
+  };
+
+  const hideDocument = (documentId: string) => {
+    setDocuments((current) => current.filter((document) => document.id !== documentId));
+    setSelectedDocumentId((current) => (current === documentId ? null : current));
+  };
+
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <UploadCloud size={18} className="text-cyan-700" />
-          <h3 className="text-lg font-black">문서 추가</h3>
-        </div>
-        <p className="mt-2 text-sm font-semibold leading-6 text-zinc-600">
-          기획 메모, 레퍼런스 요약, 시장 조사 문장을 붙여 넣어 RAG 문서로 준비합니다.
-        </p>
-      </CardHeader>
-      <CardContent>
-        <div className="mb-4 grid grid-cols-2 gap-2">
-          <Badge className={status?.googleApiKey ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}>
-            Gemini {status?.googleApiKey ? '연결됨' : '대기'}
-          </Badge>
-          <Badge className={status?.upstashVector ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}>
-            Upstash {status?.upstashVector ? '연결됨' : '대기'}
-          </Badge>
-        </div>
-        <label className="text-xs font-black uppercase text-zinc-500" htmlFor="document-title">
-          제목
-        </label>
-        <Input id="document-title" value={title} onChange={(event) => setTitle(event.target.value)} className="mt-2" />
-
-        <label className="mt-4 block text-xs font-black uppercase text-zinc-500" htmlFor="document-content">
-          내용
-        </label>
-        <Textarea id="document-content" value={content} onChange={(event) => setContent(event.target.value)} className="mt-2 h-40" />
-
-        {result && (
-          <div className="mt-4 border border-zinc-200 bg-zinc-50 p-3">
-            <p className="text-sm font-black text-zinc-950">{result.indexed ? '벡터 인덱싱 완료' : '청킹 검증 완료'}</p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-zinc-600">
-              청크 {result.chunks}개 · 네임스페이스 {result.namespace || 'emomon'}
+      <CardHeader className="p-4">
+        <div className="flex flex-col gap-3 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <UploadCloud size={18} className="text-cyan-700" />
+              <h3 className="text-lg font-black">문서 업로드 / 관리</h3>
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-zinc-600">
+              레퍼런스, 기획 메모, 시장 조사 자료를 추가하고 청킹·인덱싱 상태를 관리합니다.
             </p>
-            {result.reason && <p className="mt-2 text-xs font-semibold leading-5 text-amber-700">{result.reason}</p>}
           </div>
-        )}
+          <div className="flex flex-wrap gap-2">
+            <Badge className={status?.googleApiKey ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}>
+              Gemini {status?.googleApiKey ? '연결됨' : '대기'}
+            </Badge>
+            <Badge className={status?.upstashVector ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}>
+              Upstash {status?.upstashVector ? '연결됨' : '대기'}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-0">
+        <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <section className="space-y-4">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                readFile(event.dataTransfer.files[0]);
+              }}
+              className="flex w-full items-center justify-between gap-4 border border-dashed border-zinc-300 bg-zinc-50 p-4 text-left hover:border-cyan-700 hover:bg-cyan-50"
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center bg-white text-cyan-700">
+                  <FileText size={20} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-black text-zinc-950">{fileName || '파일 선택 또는 드롭'}</span>
+                  <span className="mt-1 block text-xs font-bold text-zinc-500">txt, md, csv, json 문서를 텍스트로 읽어옵니다.</span>
+                </span>
+              </span>
+              <UploadCloud className="shrink-0 text-zinc-500" size={18} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.csv,.json,text/plain,text/markdown,application/json,text/csv"
+              className="hidden"
+              onChange={(event) => readFile(event.target.files?.[0])}
+            />
 
-        <Button type="button" onClick={ingest} disabled={isUploading} className="mt-4 w-full">
-          {isUploading ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
-          문서 인덱싱
-        </Button>
+            <div className="grid gap-3 min-[680px]:grid-cols-[1fr_11rem_11rem]">
+              <div>
+                <label className="text-xs font-black uppercase text-zinc-500" htmlFor="document-title">
+                  제목
+                </label>
+                <Input id="document-title" value={title} onChange={(event) => setTitle(event.target.value)} className="mt-2" />
+              </div>
+              <div>
+                <label className="text-xs font-black uppercase text-zinc-500" htmlFor="document-category">
+                  분류
+                </label>
+                <select
+                  id="document-category"
+                  value={category}
+                  onChange={(event) => setCategory(event.target.value)}
+                  className="mt-2 w-full border border-zinc-300 bg-white px-3 py-3 text-sm font-black text-zinc-950"
+                >
+                  {documentCategoryOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {categoryLabel[option as RagHit['category']] ?? option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-black uppercase text-zinc-500" htmlFor="document-source-type">
+                  타입
+                </label>
+                <select
+                  id="document-source-type"
+                  value={sourceType}
+                  onChange={(event) => setSourceType(event.target.value)}
+                  className="mt-2 w-full border border-zinc-300 bg-white px-3 py-3 text-sm font-black text-zinc-950"
+                >
+                  {sourceTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black uppercase text-zinc-500" htmlFor="document-content">
+                내용
+              </label>
+              <Textarea id="document-content" value={content} onChange={(event) => setContent(event.target.value)} className="mt-2 h-64" />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-lg font-black">{content.trim().length.toLocaleString()}</p>
+                <p className="text-xs font-bold text-zinc-500">문자</p>
+              </div>
+              <div className="border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-lg font-black">{estimatedChunks}</p>
+                <p className="text-xs font-bold text-zinc-500">예상 청크</p>
+              </div>
+              <div className="border border-zinc-200 bg-zinc-50 p-3">
+                <p className="truncate text-lg font-black">{moduleLabels[context.module] ?? context.module}</p>
+                <p className="text-xs font-bold text-zinc-500">대상 서비스</p>
+              </div>
+            </div>
+
+            {result && (
+              <div className="border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-sm font-black text-zinc-950">{result.indexed ? '벡터 인덱싱 완료' : '청킹 검증 완료'}</p>
+                <p className="mt-1 text-xs font-semibold leading-5 text-zinc-600">
+                  청크 {result.chunks}개 · 네임스페이스 {result.namespace || 'emomon'}
+                </p>
+                {result.reason && <p className="mt-2 text-xs font-semibold leading-5 text-amber-700">{result.reason}</p>}
+              </div>
+            )}
+
+            <Button type="button" onClick={ingest} disabled={!canIngest} className="w-full">
+              {isUploading ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
+              문서 청킹 / 인덱싱
+            </Button>
+          </section>
+
+          <section className="space-y-4">
+            <div className="border border-zinc-200 bg-zinc-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <FolderOpen size={18} className="text-cyan-700" />
+                  <h4 className="text-sm font-black text-zinc-950">문서 관리</h4>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={loadCatalog} disabled={isCatalogLoading}>
+                  {isCatalogLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                  새로고침
+                </Button>
+              </div>
+
+              <div className="mt-3 grid gap-2 min-[560px]:grid-cols-[1fr_9rem]">
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문서명, 분류, 모듈 검색" />
+                <select
+                  value={moduleFilter}
+                  onChange={(event) => setModuleFilter(event.target.value as 'current' | 'all')}
+                  className="border border-zinc-300 bg-white px-3 py-3 text-sm font-black text-zinc-950"
+                  aria-label="문서 모듈 필터"
+                >
+                  <option value="current">현재 서비스</option>
+                  <option value="all">전체 문서</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="max-h-[24rem] overflow-y-auto border border-zinc-200 bg-white">
+              {filteredDocuments.length === 0 ? (
+                <div className="p-5 text-sm font-bold text-zinc-500">표시할 문서가 없습니다.</div>
+              ) : (
+                filteredDocuments.map((document) => (
+                  <button
+                    key={document.id}
+                    type="button"
+                    onClick={() => setSelectedDocumentId(document.id)}
+                    className={cn(
+                      'block w-full border-b border-zinc-200 p-3 text-left last:border-b-0 hover:bg-zinc-50',
+                      selectedDocument?.id === document.id && 'bg-cyan-50',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-zinc-950">{document.title}</p>
+                        <p className="mt-1 text-xs font-bold text-zinc-500">
+                          {moduleLabels[document.module] ?? document.module} · {categoryLabel[document.category as RagHit['category']] ?? document.category}
+                        </p>
+                      </div>
+                      <Badge className={document.indexed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}>
+                        {document.indexed ? '인덱싱' : '청킹'}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-zinc-500">
+                      <span>청크 {document.chunks}개</span>
+                      <span>{document.charLength.toLocaleString()}자</span>
+                      <span>{document.origin === 'catalog' ? '기본 자산' : '이번 세션'}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className="border border-zinc-200 bg-white p-4">
+              {selectedDocument ? (
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-black uppercase text-cyan-700">선택 문서</p>
+                      <h4 className="mt-1 text-base font-black leading-6 text-zinc-950">{selectedDocument.title}</h4>
+                    </div>
+                    <Badge>{sourceTypeLabel(selectedDocument.sourceType)}</Badge>
+                  </div>
+                  <p className="mt-3 text-xs font-semibold leading-5 text-zinc-600">{selectedDocument.preview}</p>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-sm font-black">{selectedDocument.chunks}</p>
+                      <p className="text-xs font-bold text-zinc-500">청크</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-black">{formatUpdatedAt(selectedDocument.updatedAt)}</p>
+                      <p className="text-xs font-bold text-zinc-500">업데이트</p>
+                    </div>
+                    <div>
+                      <p className="truncate text-sm font-black">{selectedDocument.namespace || 'emomon'}</p>
+                      <p className="text-xs font-bold text-zinc-500">Namespace</p>
+                    </div>
+                  </div>
+                  {selectedDocument.reason && <p className="mt-3 text-xs font-semibold leading-5 text-amber-700">{selectedDocument.reason}</p>}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => loadDocumentToForm(selectedDocument)}>
+                      <ClipboardCopy size={14} />
+                      폼으로 불러오기
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => hideDocument(selectedDocument.id)}>
+                      <Trash2 size={14} />
+                      화면에서 숨김
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 text-sm font-bold text-zinc-500">
+                  <ListFilter size={18} />
+                  문서를 선택하면 청킹 상태와 관리 작업이 표시됩니다.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       </CardContent>
     </Card>
   );

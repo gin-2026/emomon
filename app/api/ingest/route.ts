@@ -32,22 +32,31 @@ export async function POST(request: Request) {
   }
 
   const context = normalizeContext({ module: body?.module, plan: 'creator' });
+  const sourceId = `${slugify(context.module)}-${slugify(title) || Date.now()}`;
+  const category = body?.category || 'workflow';
+  const sourceType = body?.sourceType || 'manual';
   const chunks = await chunkTextDocument({
-    idBase: `${slugify(context.module)}-${slugify(title) || Date.now()}`,
+    idBase: sourceId,
     title,
     content,
     module: context.module,
-    category: body?.category || 'workflow',
-    sourceType: body?.sourceType || 'manual',
+    category,
+    sourceType,
     sourceName: body?.sourceName,
   });
   const result = await upsertDocumentChunks(chunks);
 
   return Response.json({
+    sourceId,
     title,
+    module: context.module,
+    category,
+    sourceType,
+    charLength: content.length,
     chunks: chunks.length,
     indexed: result.indexed,
     namespace: result.namespace,
     reason: result.reason,
+    updatedAt: new Date().toISOString(),
   });
 }

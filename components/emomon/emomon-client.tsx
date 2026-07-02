@@ -59,7 +59,7 @@ function readContextFromWindow(): AgentContext {
   const params = new URLSearchParams(window.location.search);
   const module = params.get('module') || params.get('product') || 'hub';
   const plan = params.get('plan');
-  const sourceUrl = params.get('source') || document.referrer || undefined;
+  const sourceUrl = params.get('source') || params.get('hub') || document.referrer || undefined;
 
   return normalizeContext({
     module,
@@ -124,6 +124,126 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         )}
       </div>
     </article>
+  );
+}
+
+function DashboardOverview({ context, status }: { context: AgentContext; status: ConfigStatus | null }) {
+  const docs = retrieveLocal('시장 검증 기획 컨텍스트 플랜 임베드', context, 8);
+  const confirmedDocs = docs.filter((hit) => hit.confidence === 'high').length;
+  const vectorScore = status?.readyForVectorRag ? 92 : status?.googleApiKey || status?.upstashVector ? 64 : 38;
+  const contextScore = Math.min(96, 58 + docs.length * 4 + confirmedDocs * 3);
+  const streamScore = status?.googleApiKey ? 88 : 61;
+  const ingestionScore = status?.upstashVector ? 84 : 46;
+  const scores = [
+    { label: '컨텍스트 커버리지', value: contextScore, tone: 'bg-cyan-600' },
+    { label: 'RAG 준비도', value: vectorScore, tone: status?.readyForVectorRag ? 'bg-emerald-600' : 'bg-amber-500' },
+    { label: '응답 파이프라인', value: streamScore, tone: 'bg-zinc-900' },
+    { label: '문서 인덱싱', value: ingestionScore, tone: status?.upstashVector ? 'bg-emerald-600' : 'bg-zinc-400' },
+  ];
+  const funnel = [
+    { label: '수집', value: 72 },
+    { label: '청킹', value: 66 },
+    { label: '검색', value: status?.upstashVector ? 80 : 42 },
+    { label: '생성', value: status?.googleApiKey ? 78 : 55 },
+    { label: '근거', value: contextScore },
+  ];
+
+  return (
+    <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr_0.8fr]">
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase text-cyan-700">Feature Score</p>
+              <h2 className="mt-1 text-2xl font-black">기능 스코어</h2>
+            </div>
+            <Badge className={status?.readyForVectorRag ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}>
+              {status?.readyForVectorRag ? 'Vector RAG' : 'Local Fallback'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3">
+            {scores.map((item) => (
+              <div key={item.label} className="border border-zinc-200 bg-zinc-50 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-black text-zinc-500">{item.label}</p>
+                  <p className="text-lg font-black text-zinc-950">{item.value}</p>
+                </div>
+                <div className="mt-3 h-2 bg-zinc-200">
+                  <div className={cn('h-full', item.tone)} style={{ width: `${item.value}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <BarChart3 size={18} className="text-cyan-700" />
+            <h3 className="text-lg font-black">검증 흐름</h3>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-36 items-end gap-2 border-b border-zinc-200 pb-3">
+            {funnel.map((item) => (
+              <div key={item.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+                <div className="flex h-28 w-full items-end bg-zinc-100">
+                  <div
+                    className={cn('w-full', item.value > 70 ? 'bg-cyan-600' : item.value > 50 ? 'bg-zinc-900' : 'bg-amber-500')}
+                    style={{ height: `${item.value}%` }}
+                  />
+                </div>
+                <span className="text-[0.68rem] font-black text-zinc-500">{item.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div>
+              <p className="text-xl font-black">{docs.length}</p>
+              <p className="text-xs font-bold text-zinc-500">검색 자산</p>
+            </div>
+            <div>
+              <p className="text-xl font-black">{confirmedDocs}</p>
+              <p className="text-xs font-bold text-zinc-500">확정 문서</p>
+            </div>
+            <div>
+              <p className="text-xl font-black">{status?.namespace || 'emomon'}</p>
+              <p className="text-xs font-bold text-zinc-500">Namespace</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Database size={18} className="text-cyan-700" />
+            <h3 className="text-lg font-black">연결 상태</h3>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {[
+              ['Gemini', status?.googleApiKey, status?.generativeModel || 'gemini-1.5-flash'],
+              ['Embedding', status?.googleApiKey, status?.embeddingModel || 'text-embedding-004'],
+              ['Vector DB', status?.upstashVector, 'Upstash Vector'],
+              ['현재 제품', true, moduleLabels[context.module] ?? context.module],
+            ].map(([label, active, detail]) => (
+              <div key={label as string} className="flex items-center justify-between gap-3 border border-zinc-200 bg-zinc-50 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-zinc-950">{label as string}</p>
+                  <p className="truncate text-xs font-bold text-zinc-500">{detail as string}</p>
+                </div>
+                {active ? <CheckCircle2 className="shrink-0 text-emerald-600" size={18} /> : <span className="h-2.5 w-2.5 shrink-0 bg-amber-500" />}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -512,16 +632,16 @@ function StandaloneApp() {
           <div className="flex items-center gap-4">
             <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-950 text-lg font-black text-white">M</span>
             <div>
-              <p className="text-sm font-black uppercase text-cyan-700">EmoHub Context Agent</p>
+              <p className="text-sm font-black uppercase text-cyan-700">Context Monitor</p>
               <h1 className="text-3xl font-black tracking-normal">Emomon</h1>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {[
-              ['공통 위젯', PlugZap],
-              ['Edge 스트리밍', Database],
-              ['시장 검증', BarChart3],
-              ['기획 컨텍스트', FileSearch],
+              ['위젯 상태', PlugZap],
+              ['스트리밍', Database],
+              ['검증 자산', BarChart3],
+              ['문서 컨텍스트', FileSearch],
             ].map(([label, Icon]) => {
               const TypedIcon = Icon as typeof PlugZap;
               return (
@@ -539,19 +659,7 @@ function StandaloneApp() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-6">
-        <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {[
-            ['모든 제품에서 같은 채팅', '중앙 임베드 스크립트와 위젯 라우트로 챗봇 코드를 한 곳에서 관리합니다.'],
-            ['문서 기반 검증', '추가한 문서를 청킹하고, 환경변수가 연결되면 Upstash Vector 검색 대상으로 보냅니다.'],
-            ['빠른 응답 구조', '대화 생성 라우트는 Edge Runtime과 Vercel AI SDK 스트리밍을 기준으로 구성했습니다.'],
-          ].map(([title, body]) => (
-            <article key={title} className="border border-zinc-200 bg-white p-5 shadow-sm">
-              <CheckCircle2 className="mb-3 text-emerald-600" size={22} />
-              <h2 className="text-lg font-black">{title}</h2>
-              <p className="mt-2 text-sm font-semibold leading-6 text-zinc-600">{body}</p>
-            </article>
-          ))}
-        </section>
+        <DashboardOverview context={context} status={status} />
 
         <div className="chat-grid grid gap-4">
           <ContextPanel context={context} setContext={setContext} />

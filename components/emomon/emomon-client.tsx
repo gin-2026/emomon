@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import {
+  ArrowLeft,
   ArrowUpRight,
   BarChart3,
   Bot,
@@ -47,6 +48,9 @@ import { moduleLabels } from '@/lib/rag/knowledge';
 
 type EmomonMode = 'standalone' | 'widget';
 type StandaloneSection = 'widget' | 'streaming' | 'assets' | 'documents';
+type WidgetPosition = 'bottom-left' | 'bottom-right';
+
+const DEFAULT_HUB_URL = 'https://emohub-eight.vercel.app';
 
 type ConfigStatus = {
   googleApiKey: boolean;
@@ -174,6 +178,20 @@ function readContextFromWindow(): AgentContext {
     sourceUrl,
     workspaceName: params.get('workspace') || 'Demo workspace',
   });
+}
+
+function readHubUrlFromWindow() {
+  if (typeof window === 'undefined') return DEFAULT_HUB_URL;
+
+  const hubUrl = new URLSearchParams(window.location.search).get('hub');
+  if (!hubUrl) return DEFAULT_HUB_URL;
+
+  try {
+    const parsedUrl = new URL(hubUrl);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:' ? parsedUrl.toString() : DEFAULT_HUB_URL;
+  } catch {
+    return DEFAULT_HUB_URL;
+  }
 }
 
 function stripFileExtension(fileName: string) {
@@ -319,15 +337,18 @@ function DashboardOverview({ context, status }: { context: AgentContext; status:
 }
 
 function WidgetStatusPanel({ context, status }: { context: AgentContext; status: ConfigStatus | null }) {
-  const snippet = `<script defer src="https://emomon.vercel.app/emomon-embed.js" data-emomon-module="${context.module}" data-emomon-plan="${context.plan}"></script>`;
+  const [position, setPosition] = React.useState<WidgetPosition>('bottom-right');
+  const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
+  const snippet = `<script defer src="https://emomon.vercel.app/emomon-embed.js" data-emomon-module="${context.module}" data-emomon-plan="${context.plan}" data-emomon-position="${position}"></script>`;
+  const widgetUrl = `/widget?module=${encodeURIComponent(context.module)}&plan=${encodeURIComponent(context.plan)}&source=${encodeURIComponent('Emomon embed preview')}`;
   const copySnippet = async () => {
     if (!navigator.clipboard) return;
     await navigator.clipboard.writeText(snippet);
   };
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-      <Card>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.15fr)]">
+      <Card className="min-w-0">
         <CardHeader>
           <div className="flex items-center gap-2">
             <PlugZap size={18} className="text-cyan-700" />
@@ -354,7 +375,7 @@ function WidgetStatusPanel({ context, status }: { context: AgentContext; status:
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -367,9 +388,68 @@ function WidgetStatusPanel({ context, status }: { context: AgentContext; status:
           </div>
         </CardHeader>
         <CardContent>
-          <pre className="max-h-36 overflow-auto border border-zinc-200 bg-zinc-50 p-3 text-xs font-bold leading-5 text-zinc-700">
+          <div className="mb-4">
+            <p className="mb-2 text-xs font-black text-zinc-500">위젯 위치</p>
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="위젯 위치">
+              {[
+                { value: 'bottom-left' as const, label: '왼쪽 아래' },
+                { value: 'bottom-right' as const, label: '오른쪽 아래' },
+              ].map((option) => {
+                const isSelected = position === option.value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => setPosition(option.value)}
+                    className={cn(
+                      'border px-3 py-2 text-sm font-black transition-colors',
+                      isSelected
+                        ? 'border-cyan-700 bg-cyan-50 text-cyan-800'
+                        : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-400 hover:text-zinc-950',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <pre className="max-h-36 max-w-full overflow-auto border border-zinc-200 bg-zinc-50 p-3 text-xs font-bold leading-5 text-zinc-700">
             <code>{snippet}</code>
           </pre>
+
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-xs font-black text-zinc-500">미리보기</p>
+              <p className="text-xs font-bold text-zinc-400">버튼을 눌러 실제 위젯을 확인하세요.</p>
+            </div>
+            <div className="relative h-[30rem] overflow-hidden border border-zinc-200 bg-[linear-gradient(135deg,#f4f4f5_25%,#fafafa_25%,#fafafa_50%,#f4f4f5_50%,#f4f4f5_75%,#fafafa_75%)] bg-[length:24px_24px]">
+              {isPreviewOpen && (
+                <iframe
+                  title="Emomon 위젯 미리보기"
+                  src={widgetUrl}
+                  className={cn(
+                    'absolute bottom-[4.75rem] h-[23.5rem] w-[min(24rem,calc(100%-2rem))] border border-zinc-200 bg-white shadow-2xl',
+                    position === 'bottom-left' ? 'left-4' : 'right-4',
+                  )}
+                />
+              )}
+              <button
+                type="button"
+                aria-expanded={isPreviewOpen}
+                onClick={() => setIsPreviewOpen((current) => !current)}
+                className={cn(
+                  'absolute bottom-4 inline-flex h-13 items-center gap-2 rounded-full bg-zinc-950 py-2 pl-2 pr-4 text-sm font-black text-white shadow-xl transition-transform hover:-translate-y-0.5',
+                  position === 'bottom-left' ? 'left-4' : 'right-4',
+                )}
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-zinc-950">M</span>
+                {isPreviewOpen ? '닫기' : 'Emomon'}
+              </button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -1127,6 +1207,7 @@ function StandaloneApp() {
   const [context, setContext] = React.useState<AgentContext>(() => normalizeContext(undefined));
   const [status, setStatus] = React.useState<ConfigStatus | null>(null);
   const [activeSection, setActiveSection] = React.useState<StandaloneSection>('widget');
+  const [hubUrl, setHubUrl] = React.useState(DEFAULT_HUB_URL);
   const navItems: Array<{ key: StandaloneSection; label: string; icon: typeof PlugZap }> = [
     { key: 'widget', label: '위젯 상태', icon: PlugZap },
     { key: 'streaming', label: '스트리밍', icon: Database },
@@ -1136,6 +1217,7 @@ function StandaloneApp() {
 
   React.useEffect(() => {
     setContext(readContextFromWindow());
+    setHubUrl(readHubUrlFromWindow());
     fetch('/api/status')
       .then((response) => response.json())
       .then(setStatus)
@@ -1146,7 +1228,15 @@ function StandaloneApp() {
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
       <header className="border-b border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4">
+            <a
+              href={hubUrl}
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-black text-zinc-600 shadow-sm transition-all hover:-translate-x-0.5 hover:border-zinc-400 hover:text-zinc-950"
+              title="Hub로 돌아가기"
+            >
+              <ArrowLeft size={17} />
+              <span>Hub</span>
+            </a>
             <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-950 text-lg font-black text-white">M</span>
             <div>
               <p className="text-sm font-black uppercase text-cyan-700">Context Monitor</p>

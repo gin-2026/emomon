@@ -30,7 +30,8 @@ Other products only need the central script:
   src="https://emomon.vercel.app/emomon-embed.js"
   data-emomon-module="hub"
   data-emomon-plan="free"
+  data-emomon-position="bottom-right"
 ></script>
 ```
 
-The script opens the shared widget route at `/widget`, so chat behavior, RAG assets, and upgrade messaging stay in one service.
+Set `data-emomon-position` to `bottom-right` (default) or `bottom-left`. The script opens the shared widget route at `/widget`, so chat behavior, RAG assets, and upgrade messaging stay in one service.

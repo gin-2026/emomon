@@ -6,13 +6,15 @@
   var baseUrl = script && script.src ? new URL(script.src).origin : 'https://emomon.vercel.app';
   var moduleName = script && script.dataset.emomonModule ? script.dataset.emomonModule : 'hub';
   var plan = script && script.dataset.emomonPlan ? script.dataset.emomonPlan : 'free';
+  var position = script && script.dataset.emomonPosition === 'bottom-left' ? 'bottom-left' : 'bottom-right';
+  var isLeft = position === 'bottom-left';
   var source = window.location.href;
   var isOpen = false;
 
   var root = document.createElement('div');
   root.setAttribute('data-emomon-root', 'true');
   root.style.position = 'fixed';
-  root.style.right = '20px';
+  root.style[isLeft ? 'left' : 'right'] = '20px';
   root.style.bottom = '20px';
   root.style.zIndex = '2147483000';
   root.style.fontFamily =
@@ -30,7 +32,7 @@
     '&source=' +
     encodeURIComponent(source);
   panel.style.position = 'absolute';
-  panel.style.right = '0';
+  panel.style[isLeft ? 'left' : 'right'] = '0';
   panel.style.bottom = '64px';
   panel.style.width = '390px';
   panel.style.height = '620px';
@@ -105,4 +107,3 @@
     document.body.appendChild(root);
   }
 })();
-
